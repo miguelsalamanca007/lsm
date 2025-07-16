@@ -6,23 +6,18 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <limits.h>
+#include <stdbool.h>
 
 #define BOLD "\033[1m"
 #define RESET "\033[0m"
+#define VALID_FLAGS "la"
+#define PADDING_SPACES 4
 
-int is_directory(const char *path, const char *name) {
-    char full_path[PATH_MAX];
-    snprintf(full_path, sizeof(full_path), "%s/%s", path, name);
-    struct stat st;
-    if (stat(full_path, &st) == -1) {
-        return 0; // Could not get info, treat as non-directory
-    }
-    return S_ISDIR(st.st_mode);
-}
-
-int get_term_size() {
+int get_term_size()
+{
     struct winsize w;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1)
+    {
         perror("ioctl");
         return 80; // Default terminal width instead of returning 1
     }
@@ -30,69 +25,89 @@ int get_term_size() {
     return term_size;
 }
 
-int calculate_columns(int longest_name, int term_size) {
-    int columns = term_size / (longest_name + 6);
-    return columns > 0 ? columns : 1; // Ensure at least 1 column
+int calculate_columns(int longest_name, int term_size)
+{
+    int columns = term_size / (longest_name + PADDING_SPACES);
+    return columns > 0 ? columns : 1;
 }
 
-void printchar(char *d_name) {
-    for (size_t i = 0; d_name[i] != '\0'; i++) {
-        printf("%c\n", d_name[i]);
-    }
-}
-
-char *pad_string(const char *input, size_t q, char fill_char) {
+char *pad_string(const char *input, size_t q, char fill_char)
+{
     size_t len = strlen(input);
-    if (len >= q) {
+    if (len >= q)
+    {
         char *result = malloc(len + 1);
-        if (!result) return NULL;
+        if (!result)
+            return NULL;
         strcpy(result, input);
         return result;
     }
     char *result = malloc(q + 1);
-    if (!result) return NULL;
+    if (!result)
+        return NULL;
     strcpy(result, input);
-    for (size_t i = len; i < q; i++) {
+    for (size_t i = len; i < q; i++)
+    {
         result[i] = fill_char;
     }
     result[q] = '\0';
     return result;
 }
 
-char **create_array_files(DIR *dir, int n_files) {
+char **create_array_files(DIR *dir, bool hide_dots) {
     struct dirent *entry;
-    char **files = malloc(sizeof(char*) * n_files);
-    if (!files) {
-        perror("malloc");
-        return NULL;
-    }
+    char **files = NULL;
+    int size = 0;
     
-    int i = 0;
     while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] == '.') continue;
-        files[i] = strdup(entry->d_name);
-        if (!files[i]) {
-            // Clean up on failure
-            for (int j = 0; j < i; j++) {
-                free(files[j]);
-            }
+        if(entry->d_name[0]=='.' && hide_dots) continue;
+        
+        char **tmp = realloc(files, (size + 1) * sizeof(char *));
+        if (!tmp) {
+            for (int j = 0; j < size; j++) free(files[j]);
             free(files);
-            perror("strdup");
+            perror("realloc");
             return NULL;
         }
-        i++;
+        files = tmp;
+        
+        if (entry->d_type == DT_DIR) {
+            int len = strlen(entry->d_name) + 9;
+            files[size] = malloc(len);
+            if (!files[size]) {
+                for (int j = 0; j < size; j++) free(files[j]);
+                free(files);
+                perror("malloc");
+                return NULL;
+            }
+            snprintf(files[size], len, BOLD "%s" RESET, entry->d_name);
+        } else {
+            files[size] = strdup(entry->d_name);
+            if (!files[size]) {
+                for (int j = 0; j < size; j++) free(files[j]);
+                free(files);
+                perror("strdup");
+                return NULL;
+            }
+        }
+        size++;
     }
     return files;
 }
 
-void display_ls(char **files, int n_files, int columns, int longest_fname) {
-    int characters_per_column = longest_fname + 6;
+void display_as_columns(char **files, int n_files, int columns, int longest_fname)
+{
+    int characters_per_column = longest_fname + PADDING_SPACES;
     int i = 0;
-    while (i < n_files) {
-        for (int j = 0; j < columns; j++) {
-            if (i >= n_files) break;
+    while (i < n_files)
+    {
+        for (int j = 0; j < columns; j++)
+        {
+            if (i >= n_files)
+                break;
             char *padded = pad_string(files[i], characters_per_column, ' ');
-            if (padded) {
+            if (padded)
+            {
                 printf("%s", padded);
                 free(padded);
             }
@@ -102,22 +117,70 @@ void display_ls(char **files, int n_files, int columns, int longest_fname) {
     }
 }
 
-int main(int argc, char *argv[]) {
-    const char *path = ".";
-    if (argc > 1) {
-        path = argv[1];
+void display_as_list(char **files, int n_files)
+{
+    for (int i = 0; i < n_files; i++)
+    {
+        printf("%s\n", files[i]);
     }
-    
+}
+
+bool is_directory(const char *path)
+{
     DIR *dir = opendir(path);
-    if (dir == NULL) {
-        perror("opendir");
-        return EXIT_FAILURE;
+    if (dir == NULL)
+    {
+        perror("lsm");
+        return false;
     }
-    
+    closedir(dir);
+
+    return true;
+}
+
+bool is_flag(const char *flag)
+{
+    if (strlen(flag) <= 1)
+    {
+        return false;
+    }
+
+    if (flag[0] != '-')
+    {
+        return false;
+    }
+
+    for (int i = 1; flag[i] != '\0'; i++)
+    {
+        if (strchr(VALID_FLAGS, flag[i]) == NULL)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+int main(int argc, char *argv[]) {
+    const char *path;
+
+    if (argc > 1) {
+        if (is_flag(argv[argc-1])) {
+            path = ".";
+        } else if (is_directory(argv[argc-1])) {
+            path = argv[argc-1];
+        } else {
+            return EXIT_FAILURE;
+        }
+    } else {
+        path = ".";
+    }
+
+    DIR *dir = opendir(path);
     struct dirent *entry;
     long longest_name = 0;
     long n_files = 0;
-    
+
     while ((entry = readdir(dir)) != NULL) {
         if (entry->d_name[0] == '.') continue;
         n_files++;
@@ -125,27 +188,24 @@ int main(int argc, char *argv[]) {
             longest_name = strlen(entry->d_name);
         }
     }
-    
-    // Reset directory stream instead of closing and reopening
+
     rewinddir(dir);
-    
-    char **files = create_array_files(dir, n_files);
+    char **files = create_array_files(dir, true);
     closedir(dir);
-    
+
     if (!files) {
         return EXIT_FAILURE;
     }
-    
+
     int term_size = get_term_size();
     int columns = calculate_columns(longest_name, term_size);
-    
-    display_ls(files, n_files, columns, longest_name);
-    
-    // Clean up allocated memory
+
+    display_as_list(files, n_files);
+
     for (int i = 0; i < n_files; i++) {
         free(files[i]);
     }
     free(files);
-    
+
     return EXIT_SUCCESS;
 }
