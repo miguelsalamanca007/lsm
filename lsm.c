@@ -13,9 +13,18 @@
 #define VALID_FLAGS "la"
 #define PADDING_SPACES 4
 #define DEFAULT_FILLER ' '
+#define MAX_COLUMNS 7
 
-int get_term_size()
-{
+char *add_bold(char *s) {
+    size_t size = strlen(s) + strlen(BOLD) + strlen(RESET) + 1;
+    char* result = malloc(size);
+    if (result == NULL) return NULL;
+    snprintf(result, size, "%s%s%s", BOLD, s, RESET);
+
+    return result;
+}
+
+int get_term_size() {
     struct winsize w;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1)
     {
@@ -28,7 +37,7 @@ int get_term_size()
 
 int calculate_columns(int longest_name) {
     int columns = get_term_size() / (longest_name + PADDING_SPACES);
-    if (columns > 7) return 7;
+    if (columns > MAX_COLUMNS) return MAX_COLUMNS;
     return columns > 0 ? columns : 1;
 }
 
@@ -60,7 +69,13 @@ char **create_array_files(const char *path, bool hide_dots, int file_arr_size, i
     while ((entry = readdir(dir)) != NULL) {
         if (hide_dots && entry->d_name[0] == '.') continue;
         // files[i] = strdup(entry->d_name);
-        files[i] = pad_string(entry->d_name, size_column, DEFAULT_FILLER);
+        if (entry->d_type == DT_DIR) {
+            char *bolded = add_bold(entry->d_name);
+            files[i] = pad_string(bolded, size_column + 8, DEFAULT_FILLER);
+            free(bolded);
+        } else {
+            files[i] = pad_string(entry->d_name, size_column, DEFAULT_FILLER);
+        }
         i++;
     }
     while (i < file_arr_size) {
@@ -99,6 +114,11 @@ void display_as_columns(const char *path, bool hide_dots) {
         printf("\n");
     }
 
+    for (int i = 0; i < files_per_column * n_columns; i++) {
+        free(files[i]);
+    }
+
+    free(files);
     closedir(dir);
 }
 
@@ -108,7 +128,11 @@ void display_as_list(const char *path, bool hide_dots) {
 
     while ((entry = readdir(dir)) != NULL) {
         if (hide_dots && entry->d_name[0] == '.') continue;
-        printf("%s\n", entry->d_name);
+        if (entry->d_type == DT_DIR) {
+            printf(BOLD "%s" RESET "\n", entry->d_name);
+        } else {
+            printf("%s\n", entry->d_name);
+        }
     }
     closedir(dir);
 }
