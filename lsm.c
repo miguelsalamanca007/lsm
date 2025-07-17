@@ -28,6 +28,7 @@ int get_term_size()
 
 int calculate_columns(int longest_name) {
     int columns = get_term_size() / (longest_name + PADDING_SPACES);
+    if (columns > 7) return 7;
     return columns > 0 ? columns : 1;
 }
 
@@ -93,7 +94,7 @@ void display_as_columns(const char *path, bool hide_dots) {
 
     for(int i = 0; i < files_per_column; i++) {
         for (int j = 0; j < n_columns; j++) {
-            printf("%s ", files[i + j * files_per_column]);
+            printf("%s", files[i + j * files_per_column]);
         }
         printf("\n");
     }
@@ -101,10 +102,15 @@ void display_as_columns(const char *path, bool hide_dots) {
     closedir(dir);
 }
 
-void display_as_list(char **files, int n_files) {
-    for (int i = 0; i < n_files; i++) {
-        printf("%s\n", files[i]);
+void display_as_list(const char *path, bool hide_dots) {
+    DIR *dir = opendir(path);
+    struct dirent *entry;
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (hide_dots && entry->d_name[0] == '.') continue;
+        printf("%s\n", entry->d_name);
     }
+    closedir(dir);
 }
 
 bool is_directory(const char *path) {
@@ -129,13 +135,36 @@ bool is_flag(const char *flag) {
     return true;
 }
 
+bool has_hidden_flag(const char *flag) {
+    for (int i = 1; flag[i] != '\0'; i++) {
+        if (flag[i] == 'a') { 
+            return true;
+        } 
+    }
+
+    return false;
+}
+
+bool has_display_list_flag(const char *flag) {
+    for (int i = 1; flag[i] != '\0'; i++) {
+        if (flag[i] == 'l') { 
+            return true;
+        } 
+    }
+
+    return false;
+}
+
 int main(int argc, char *argv[]) {
     const char *path;
+    char *last_arg = argv[argc-1];
+    bool hide_dots = true;
+    bool display_list = false; 
     if (argc > 1) {
-        if (is_flag(argv[argc-1])) {
+        if (is_flag(last_arg)) {
             path = ".";
-        } else if (is_directory(argv[argc-1])) {
-            path = argv[argc-1];
+        } else if (is_directory(last_arg)) {
+            path = last_arg;
         } else {
             return EXIT_FAILURE;
         }
@@ -143,8 +172,28 @@ int main(int argc, char *argv[]) {
         path = ".";
     }
 
-    bool hide_dots = true;
-    display_as_columns(path, hide_dots);
+    if (argc >= 2) {
+        int loop_limit = is_flag(last_arg) ? argc : argc - 1; 
+        for (int i = 1; i < loop_limit; i++) {
+
+            if(!is_flag(argv[i])) {
+                perror("Error identifying flag");
+                return EXIT_FAILURE;
+            }
+            if (has_hidden_flag(argv[i])) {
+                hide_dots = false;
+            }
+            if (has_display_list_flag(argv[i])) {
+                display_list = true;
+            }
+        }
+    }
+
+    if (display_list) {
+        display_as_list(path, hide_dots);
+    } else {
+        display_as_columns(path, hide_dots);
+    }
 
     return EXIT_SUCCESS;
 }
